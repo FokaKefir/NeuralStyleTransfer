@@ -145,12 +145,12 @@ if __name__ == '__main__':
     # adam, random  init -> (cw, sw, tv, lr) = (1e5, 1e2, 1e-1, 1e1)
 
     param_config = {
-        'content_img_name': ['green_bridge.jpg'],
-        'style_img_name': ['mosaic.jpg'],
+        'content_img_name': ['green_bridge.jpg', 'figures.jpg', 'lion.jpg', 'taj_mahal.jpg'],
+        'style_img_name': ['mosaic.jpg', 'ben_giles.jpg', 'vg_starry_night.jpg'],
         'init_method': ['random', 'content', 'style'],
         'content_weight': [1e5],
-        'style_weight': [1e1, 1e2, 1e3, 1e4, 1e5, 1e6],
-        'tv_weight': [1e0],
+        'style_weight': [1e1, 1e2, 1e3, 1e4, 1e5],
+        'tv_weight': [1e0, 1e-1, 1e1],
         'optimizer': ['adam'],
         'model': ['vgg19'],
     }
