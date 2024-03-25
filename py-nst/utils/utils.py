@@ -5,6 +5,7 @@ from torchvision import transforms
 import os
 import matplotlib.pyplot as plt
 import wandb
+import uuid
 
 
 from models.definitions.vgg_nets import Vgg16, Vgg19, Vgg16Experimental
@@ -61,13 +62,7 @@ def save_image(img, img_path):
 
 
 def generate_out_img_name(config):
-    prefix = os.path.basename(config['content_img_name']).split('.')[0] + '_' + os.path.basename(config['style_img_name']).split('.')[0]
-    # called from the reconstruction script
-    if 'reconstruct_script' in config:
-        suffix = f'_o_{config["optimizer"]}_h_{str(config["height"])}_m_{config["model"]}{config["img_format"][1]}'
-    else:
-        suffix = f'_o_{config["optimizer"]}_i_{config["init_method"]}_h_{str(config["height"])}_m_{config["model"]}_cw_{config["content_weight"]}_sw_{config["style_weight"]}_tv_{config["tv_weight"]}{config["img_format"][1]}'
-    return prefix + suffix
+    return f"{uuid.uuid4()}{config['img_format'][1]}"
 
 
 def save_and_maybe_display(optimizing_img, dump_path, config, img_id, num_of_iterations, should_display=False, wandb_log=False):
@@ -84,6 +79,7 @@ def save_and_maybe_display(optimizing_img, dump_path, config, img_id, num_of_ite
         dump_img = np.clip(dump_img, 0, 255).astype('uint8')
         if wandb_log == False:
             cv.imwrite(os.path.join(dump_path, out_img_name), dump_img[:, :, ::-1])
+            return out_img_name
         else:
             wandb.log({"samples": wandb.Image(dump_img)})
 
@@ -91,6 +87,7 @@ def save_and_maybe_display(optimizing_img, dump_path, config, img_id, num_of_ite
     if should_display:
         plt.imshow(np.uint8(get_uint8_range(out_img)))
         plt.show()
+    
 
 
 def get_uint8_range(x):

@@ -2,10 +2,14 @@ version: '3'
 services:
   nst-service:
     container_name: nst-container
-    image: nst-server:latest
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./data/:/usr/share/nginx/html:ro
+    image: nvcr.io/nvidia/pytorch:22.01-py3
     ports:
-      - 80:80
+      - 80:2000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped

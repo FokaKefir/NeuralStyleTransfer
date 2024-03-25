@@ -1,0 +1,2 @@
+docker run --gpus all -it --rm nvcr.io/nvidia/pytorch:22.01-py3
+docker run --gpus all -it --rm fokakefir/pytorch-server
