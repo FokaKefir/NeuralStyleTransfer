@@ -6,6 +6,8 @@ import os
 import uuid
 
 from nst import neural_style_transfer
+from utils.db_utils import update_gen_document
+from utils.api_const import BASE_URL
 
 IMG_HEIGHT = 400
 
@@ -79,9 +81,9 @@ async def get_generated_image(image_name: str):
 
 
 #@app.get('/user/{user_id}/generate')
-@app.get('/generate')
+@app.post('/generate')
 async def generate(
-    user_id: int,
+    doc_id: str,
     content_img: str,
     style_img: str,
     init_method: str,
@@ -106,4 +108,5 @@ async def generate(
         'saving_freq': -1
     }
     img_name = neural_style_transfer(config)
+    update_gen_document(doc_id, BASE_URL + "image/generated/" + img_name)
     return {'image': img_name}
