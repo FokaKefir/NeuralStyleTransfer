@@ -22,6 +22,9 @@ app = FastAPI()
 
 # add cors
 origins = [
+    "http://localhost:3000",  # React development server
+    "http://localhost:5000",  # Other potential local ports
+    "http://fokakefir.go.ro",  # Your production domain
     "*"
 ]
 
@@ -77,7 +80,14 @@ async def get_content_image(image_name: str):
 @app.get('/image/generated/{image_name}')
 async def get_generated_image(image_name: str):
     image_path = os.path.join(output_img_dir, image_name)
-    return FileResponse(image_path)
+    return FileResponse(
+        image_path,
+        headers={
+            "Content-Disposition": f"attachment; filename={image_name}",
+            "Access-Control-Expose-Headers": "Content-Disposition",
+            "Access-Control-Allow-Origin": "*" 
+        }
+    )
 
 
 #@app.get('/user/{user_id}/generate')
