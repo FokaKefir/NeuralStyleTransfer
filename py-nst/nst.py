@@ -105,8 +105,11 @@ def neural_style_transfer(config):
 
 def neural_style_transfer_with_segmentation(config):
     content_img_path = os.path.join(config['content_images_dir'], config['content_img_name'])
-    style_person_img_path = os.path.join(config['style_images_dir'], config['style_person_img_name'])
-    style_background_img_path = os.path.join(config['style_images_dir'], config['style_background_img_name'])
+
+    if config['style_person_img_name'] is not None:
+        style_person_img_path = os.path.join(config['style_images_dir'], config['style_person_img_name'])
+    if config['style_background_img_name'] is not None:
+        style_background_img_path = os.path.join(config['style_images_dir'], config['style_background_img_name'])
 
     dump_path = config['output_img_dir']
     os.makedirs(dump_path, exist_ok=True)
@@ -114,8 +117,8 @@ def neural_style_transfer_with_segmentation(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     content_img = utils.prepare_img(content_img_path, config['height'], device)
-    style_person_img = utils.prepare_img(style_person_img_path, config['height'], device)
-    style_background_img = utils.prepare_img(style_background_img_path, config['height'], device)
+    style_person_img = utils.prepare_img(style_person_img_path, config['height'], device) if config['style_person_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
+    style_background_img = utils.prepare_img(style_background_img_path, config['height'], device) if config['style_background_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
 
     if config['init_method'] == 'random':
         # white_noise_img = np.random.uniform(-90., 90., content_img.shape).astype(np.float32)
@@ -131,13 +134,13 @@ def neural_style_transfer_with_segmentation(config):
     else:
         # init image has same dimension as content image - this is a hard constraint
         # feature maps need to be of same size for content image and init image
-        init_person_img = utils.prepare_img(style_person_img_path, np.asarray(content_img.shape[2:]), device)
-        init_background_img = utils.prepare_img(style_background_img_path, np.asarray(content_img.shape[2:]), device)
+        init_person_img = style_person_img.clone().detach()
+        init_background_img = style_background_img.clone().detach()
 
 
     # we are tuning optimizing_img's pixels! (that's why requires_grad=True)
-    optimizing_person_img = Variable(init_person_img, requires_grad=True)
-    optimizing_background_img = Variable(init_background_img, requires_grad=True)
+    optimizing_person_img = Variable(init_person_img, requires_grad=True) if config['style_person_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
+    optimizing_background_img = Variable(init_background_img, requires_grad=True) if config['style_background_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
 
     neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
     print(f'Using {config["model"]} in the optimization procedure.')
@@ -164,15 +167,17 @@ def neural_style_transfer_with_segmentation(config):
     for cnt in range(num_of_iterations):
 
         # optimizing person image
-        total_loss, content_loss, style_loss, tv_loss = tuning_step_person(optimizing_person_img)
-        with torch.no_grad():
-            print(f'P: Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_person_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-        
+        if config['style_person_img_name'] is not None:
+            total_loss, content_loss, style_loss, tv_loss = tuning_step_person(optimizing_person_img)
+            with torch.no_grad():
+                print(f'P: Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_person_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+            
         # optimizing background image
-        total_loss, content_loss, style_loss, tv_loss = tuning_step_background(optimizing_background_img)
-        with torch.no_grad():
-            print(f'B: Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_background_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-    
+        if config['style_background_img_name'] is not None:
+            total_loss, content_loss, style_loss, tv_loss = tuning_step_background(optimizing_background_img)
+            with torch.no_grad():
+                print(f'B: Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_background_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+        
     
     # segmentation part
     mask_seg = extract_person_mask_from_image(image_path=content_img_path, segmentation_mask_height=config['height'], device=device)
@@ -185,8 +190,8 @@ def neural_style_transfer_with_segmentation(config):
     optimizing_img = optimizing_person_img * mask3 + optimizing_background_img * (1.0 - mask3)
 
     img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, cnt, num_of_iterations, should_display=False)
-    utils.save_and_maybe_display(optimizing_person_img, os.path.join(dump_path, "person"), config, cnt, num_of_iterations, should_display=False)
-    utils.save_and_maybe_display(optimizing_background_img, os.path.join(dump_path, "background"), config, cnt, num_of_iterations, should_display=False)
+    # utils.save_and_maybe_display(optimizing_person_img, os.path.join(dump_path, "person"), config, cnt, num_of_iterations, should_display=False)
+    # utils.save_and_maybe_display(optimizing_background_img, os.path.join(dump_path, "background"), config, cnt, num_of_iterations, should_display=False)
 
 
     return img_name
