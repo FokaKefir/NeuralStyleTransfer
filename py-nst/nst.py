@@ -134,13 +134,17 @@ def neural_style_transfer_with_segmentation(config):
     else:
         # init image has same dimension as content image - this is a hard constraint
         # feature maps need to be of same size for content image and init image
-        init_person_img = style_person_img.clone().detach()
-        init_background_img = style_background_img.clone().detach()
+        init_person_img = utils.prepare_img(style_person_img_path, np.asarray(content_img.shape[2:]), device)
+        init_background_img = utils.prepare_img(style_background_img_path, np.asarray(content_img.shape[2:]), device)
 
 
     # we are tuning optimizing_img's pixels! (that's why requires_grad=True)
     optimizing_person_img = Variable(init_person_img, requires_grad=True) if config['style_person_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
     optimizing_background_img = Variable(init_background_img, requires_grad=True) if config['style_background_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
+
+    print(content_img.shape)
+    print(optimizing_person_img.size())
+    print(optimizing_background_img.size())
 
     neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
     print(f'Using {config["model"]} in the optimization procedure.')
