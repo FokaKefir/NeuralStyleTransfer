@@ -12,27 +12,58 @@ import argparse
 
 
 def build_loss(neural_net, optimizing_img, target_representations, content_feature_maps_index, style_feature_maps_indices, config, str_flag=""):
-    target_content_representation = target_representations[0]
-    target_style_representation = target_representations[1]
+    if len(target_representations) == 2:
+        target_content_representation = target_representations[0]
+        target_style_representation = target_representations[1]
 
-    current_set_of_feature_maps = neural_net(optimizing_img)
+        current_set_of_feature_maps = neural_net(optimizing_img)
 
-    current_content_representation = current_set_of_feature_maps[content_feature_maps_index].squeeze(axis=0)
-    content_loss = torch.nn.MSELoss(reduction='mean')(target_content_representation, current_content_representation)
+        current_content_representation = current_set_of_feature_maps[content_feature_maps_index].squeeze(axis=0)
+        content_loss = torch.nn.MSELoss(reduction='mean')(target_content_representation, current_content_representation)
 
-    style_loss = 0.0
-    current_style_representation = [utils.gram_matrix(x) for cnt, x in enumerate(current_set_of_feature_maps) if cnt in style_feature_maps_indices]
-    for gram_gt, gram_hat in zip(target_style_representation, current_style_representation):
-        style_loss += torch.nn.MSELoss(reduction='sum')(gram_gt[0], gram_hat[0])
-    style_loss /= len(target_style_representation)
+        style_loss = 0.0
+        current_style_representation = [utils.gram_matrix(x) for cnt, x in enumerate(current_set_of_feature_maps) if cnt in style_feature_maps_indices]
+        for gram_gt, gram_hat in zip(target_style_representation, current_style_representation):
+            style_loss += torch.nn.MSELoss(reduction='sum')(gram_gt[0], gram_hat[0])
+        style_loss /= len(target_style_representation)
 
-    tv_loss = utils.total_variation(optimizing_img)
+        tv_loss = utils.total_variation(optimizing_img)
 
-    if str_flag == "":
-        total_loss = config['content_weight'] * content_loss + config[f'style_weight'] * style_loss + config['tv_weight'] * tv_loss
-    else:
-        total_loss = config['content_weight'] * content_loss + config[f'style_{str_flag}_weight'] * style_loss + config['tv_weight'] * tv_loss
+        if str_flag == "":
+            total_loss = config['content_weight'] * content_loss + config[f'style_weight'] * style_loss + config['tv_weight'] * tv_loss
+        else:
+            total_loss = config['content_weight'] * content_loss + config[f'style_{str_flag}_weight'] * style_loss + config['tv_weight'] * tv_loss
+    
+    elif len(target_representations) == 3:
+        target_content_representation = target_representations[0]
+        target_style_representation_1 = target_representations[1]
+        target_style_representation_2 = target_representations[2]
 
+        current_set_of_feature_maps = neural_net(optimizing_img)
+
+        current_content_representation = current_set_of_feature_maps[content_feature_maps_index].squeeze(axis=0)
+        content_loss = torch.nn.MSELoss(reduction='mean')(target_content_representation, current_content_representation)
+
+        style_loss = 0.0
+        style_loss_1 = 0.0
+        style_loss_2 = 0.0
+        current_style_representation = [utils.gram_matrix(x) for cnt, x in enumerate(current_set_of_feature_maps) if cnt in style_feature_maps_indices]
+        for gram_gt, gram_hat in zip(target_style_representation_1, current_style_representation):
+            style_loss_1 += torch.nn.MSELoss(reduction='sum')(gram_gt[0], gram_hat[0])
+        style_loss_1 /= len(target_style_representation_1)
+
+        for gram_gt, gram_hat in zip(target_style_representation_2, current_style_representation):
+            style_loss_2 += torch.nn.MSELoss(reduction='sum')(gram_gt[0], gram_hat[0])
+        style_loss_2 /= len(target_style_representation_2)
+
+        style_loss = config['alpha'] * style_loss_2 + (1 - config['alpha']) * style_loss_1
+
+        tv_loss = utils.total_variation(optimizing_img)
+
+        if str_flag == "":
+            total_loss = config['content_weight'] * content_loss + config[f'style_weight'] * style_loss + config['tv_weight'] * tv_loss
+        else:
+            total_loss = config['content_weight'] * content_loss + config[f'style_{str_flag}_weight'] * style_loss + config['tv_weight'] * tv_loss
 
     return total_loss, content_loss, style_loss, tv_loss
 
@@ -200,3 +231,53 @@ def neural_style_transfer_with_segmentation(config):
 
     return img_name
 
+def neural_style_transfer_mixed(config):
+    content_img_path = os.path.join(config['content_images_dir'], config['content_img_name'])
+    style_img_path_1 = os.path.join(config['style_images_dir'], config['style_img_name_1'])
+    style_img_path_2 = os.path.join(config['style_images_dir'], config['style_img_name_2'])
+
+    dump_path = config['output_img_dir']
+    os.makedirs(dump_path, exist_ok=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    content_img = utils.prepare_img(content_img_path, config['height'], device)
+    style_img_1 = utils.prepare_img(style_img_path_1, config['height'], device)
+    style_img_2 = utils.prepare_img(style_img_path_2, config['height'], device)
+
+    if config['init_method'] == 'random':
+        # white_noise_img = np.random.uniform(-90., 90., content_img.shape).astype(np.float32)
+        gaussian_noise_img = np.random.normal(loc=0, scale=90., size=content_img.shape).astype(np.float32)
+        init_img = torch.from_numpy(gaussian_noise_img).float().to(device)
+    elif config['init_method'] == 'content':
+        init_img = content_img
+
+
+    # we are tuning optimizing_img's pixels! (that's why requires_grad=True)
+    optimizing_img = Variable(init_img, requires_grad=True)
+
+    neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
+    print(f'Using {config["model"]} in the optimization procedure.')
+
+    content_img_set_of_feature_maps = neural_net(content_img)
+    style_img_set_of_feature_maps_1 = neural_net(style_img_1)
+    style_img_set_of_feature_maps_2 = neural_net(style_img_2)
+
+    target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+    target_style_representation_1 = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps_1) if cnt in style_feature_maps_indices_names[0]]
+    target_style_representation_2 = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps_2) if cnt in style_feature_maps_indices_names[0]]
+    target_representations = [target_content_representation, target_style_representation_1, target_style_representation_2]
+
+    # magic numbers in general are a big no no - some things in this code are left like this by design to avoid clutter
+    num_of_iterations = config['iterations']
+
+    optimizer = Adam((optimizing_img,), lr=1e1)
+    tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
+    for cnt in range(num_of_iterations):
+        total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
+        with torch.no_grad():
+            print(f'Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+            img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, cnt, num_of_iterations, should_display=False)
+
+
+    return img_name
