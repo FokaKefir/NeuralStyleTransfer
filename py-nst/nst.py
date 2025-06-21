@@ -173,10 +173,6 @@ def neural_style_transfer_with_segmentation(config):
     optimizing_person_img = Variable(init_person_img, requires_grad=True) if config['style_person_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
     optimizing_background_img = Variable(init_background_img, requires_grad=True) if config['style_background_img_name'] is not None else Variable(content_img.clone().detach(), requires_grad=True)
 
-    print(content_img.shape)
-    print(optimizing_person_img.size())
-    print(optimizing_background_img.size())
-
     neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
     print(f'Using {config["model"]} in the optimization procedure.')
 
@@ -225,8 +221,8 @@ def neural_style_transfer_with_segmentation(config):
     optimizing_img = optimizing_person_img * mask3 + optimizing_background_img * (1.0 - mask3)
 
     img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, cnt, num_of_iterations, should_display=False)
-    # utils.save_and_maybe_display(optimizing_person_img, os.path.join(dump_path, "person"), config, cnt, num_of_iterations, should_display=False)
-    # utils.save_and_maybe_display(optimizing_background_img, os.path.join(dump_path, "background"), config, cnt, num_of_iterations, should_display=False)
+    utils.save_and_maybe_display(optimizing_person_img, os.path.join(dump_path, "person"), config, cnt, num_of_iterations, should_display=False)
+    utils.save_and_maybe_display(optimizing_background_img, os.path.join(dump_path, "background"), config, cnt, num_of_iterations, should_display=False)
 
 
     return img_name

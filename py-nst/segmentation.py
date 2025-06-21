@@ -64,8 +64,12 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     res = extract_person_mask_from_image(
-        image_path='data/content-images/csajszi.jpg',
-        segmentation_mask_height=400,
+        image_path='data/content-images/downey.jpg',
+        segmentation_mask_height=600,
         device=device
     )
+
+    # save it
+    out_path = 'data/output-images/seg/downey_mask.jpg'
+    cv.imwrite(out_path, res)
     
