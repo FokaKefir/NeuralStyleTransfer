@@ -356,9 +356,9 @@ If you use this project in your research or application, please cite:
 ```bibtex
 @thesis{styleapp2024,
   title={AI the Artist: Creative Image Stylization with Neural Style Transfer},
-  author={Your Name},
+  author={Babos Dávid},
   year={2024},
-  school={Your University},
+  school={Sapientia Hungarian University of Transylvania},
   note={1st Place, Scientific Student Conference 2024; Accenture Special Award}
 }
 ```
@@ -376,7 +376,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 📬 Contact
 
-For questions, suggestions, or collaboration opportunities, please open an issue or contact [your-email@example.com].
+For questions, suggestions, or collaboration opportunities, please open an issue or contact [babosdavid8@gmail.com].
 
 ---
 
