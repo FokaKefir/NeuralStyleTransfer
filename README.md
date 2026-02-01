@@ -378,6 +378,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions, suggestions, or collaboration opportunities, please open an issue or contact [babosdavid8@gmail.com].
 
----
-
-**Note**: This is the backend component of the StyleApp project. For the complete cross-platform application (React web + Android), please visit the main repository.
+## Related Projects
+- Android front-end: [StyleApp](https://github.com/FokaKefir/StyleApp)
+- React front-end: [style-web](https://github.com/FokaKefir/style-web)
