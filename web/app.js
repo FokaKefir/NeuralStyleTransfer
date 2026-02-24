@@ -28,6 +28,149 @@ const resultPanel = document.getElementById('resultPanel');
 const resultImage = document.getElementById('resultImage');
 const downloadBtn = document.getElementById('downloadBtn');
 const newGenerationBtn = document.getElementById('newGenerationBtn');
+const styleGallery = document.getElementById('styleGallery');
+const contentGallery = document.getElementById('contentGallery');
+const tabBtns = document.querySelectorAll('.tab-btn');
+const styleLibrary = document.getElementById('styleLibrary');
+const styleUpload = document.getElementById('styleUpload');
+const contentLibrary = document.getElementById('contentLibrary');
+const contentUpload = document.getElementById('contentUpload');
+
+// Event Listeners
+contentInput.addEventListener('change', (e) => handleImageSelect(e, 'content'));
+styleInput.addEventListener('change', (e) => handleImageSelect(e, 'style'));
+uploadContentBtn.addEventListener('click', () => uploadImage('content'));
+uploadStyleBtn.addEventListener('click', () => uploadImage('style'));
+generateBtn.addEventListener('click', generateImage);
+downloadBtn.addEventListener('click', downloadImage);
+newGenerationBtn.addEventListener('click', resetApp);
+
+// Tab switching
+tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        
+        // Update button states
+        const parentTabs = btn.parentElement;
+        parentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        // Update content visibility
+        if (tab === 'library') {
+            styleLibrary.classList.add('active');
+            styleUpload.classList.remove('active');
+        } else if (tab === 'upload') {
+            styleLibrary.classList.remove('active');
+            styleUpload.classList.add('active');
+        } else if (tab === 'content-library') {
+            contentLibrary.classList.add('active');
+            contentUpload.classList.remove('active');
+        } else if (tab === 'content-upload') {
+            contentLibrary.classList.remove('active');
+            contentUpload.classList.add('active');
+        }
+    });
+});
+
+// Load content library
+async function loadContentLibrary() {
+    try {
+        const response = await fetch(`${API_URL}/content/list`);
+        const data = await response.json();
+        
+        if (data.content && data.content.length > 0) {
+            contentGallery.innerHTML = '';
+            data.content.forEach(contentName => {
+                const item = document.createElement('div');
+                item.className = 'content-item';
+                item.innerHTML = `<img src="${API_URL}/image/content/${contentName}" alt="${contentName}">`;
+                item.onclick = () => selectContentFromLibrary(contentName, item);
+                contentGallery.appendChild(item);
+            });
+        } else {
+            contentGallery.innerHTML = '<p class="loading">No content images available. Upload some!</p>';
+        }
+    } catch (error) {
+        contentGallery.innerHTML = '<p class="loading">Error loading content images</p>';
+        console.error('Failed to load content library:', error);
+    }
+}
+
+// Select content from library
+function selectContentFromLibrary(contentName, itemElement) {
+    // Remove previous selection
+    document.querySelectorAll('.content-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    // Mark as selected
+    itemElement.classList.add('selected');
+    
+    // Update preview
+    contentPreview.classList.remove('empty');
+    contentPreview.innerHTML = `<img src="${API_URL}/image/content/${contentName}" alt="${contentName}">`;
+    
+    // Set content name
+    contentImageName = contentName;
+    contentImageFile = null; // Clear file as we're using library
+    
+    // Update status
+    contentStatus.textContent = '✓ Content selected from library';
+    contentStatus.className = 'status success';
+    
+    // Update generate button
+    updateGenerateButton();
+}
+
+// Load style library
+async function loadStyleLibrary() {
+    try {
+        const response = await fetch(`${API_URL}/styles/list`);
+        const data = await response.json();
+        
+        if (data.styles && data.styles.length > 0) {
+            styleGallery.innerHTML = '';
+            data.styles.forEach(styleName => {
+                const item = document.createElement('div');
+                item.className = 'style-item';
+                item.innerHTML = `<img src="${API_URL}/image/style/${styleName}" alt="${styleName}">`;
+                item.onclick = () => selectStyleFromLibrary(styleName, item);
+                styleGallery.appendChild(item);
+            });
+        } else {
+            styleGallery.innerHTML = '<p class="loading">No styles available. Upload some!</p>';
+        }
+    } catch (error) {
+        styleGallery.innerHTML = '<p class="loading">Error loading styles</p>';
+        console.error('Failed to load style library:', error);
+    }
+}
+
+// Select style from library
+function selectStyleFromLibrary(styleName, itemElement) {
+    // Remove previous selection
+    document.querySelectorAll('.style-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    // Mark as selected
+    itemElement.classList.add('selected');
+    
+    // Update preview
+    stylePreview.classList.remove('empty');
+    stylePreview.innerHTML = `<img src="${API_URL}/image/style/${styleName}" alt="${styleName}">`;
+    
+    // Set style name
+    styleImageName = styleName;
+    styleImageFile = null; // Clear file as we're using library
+    
+    // Update status
+    styleStatus.textContent = '✓ Style selected from library';
+    styleStatus.className = 'status success';
+    
+    // Update generate button
+    updateGenerateButton();
+}
 
 // Event Listeners
 contentInput.addEventListener('change', (e) => handleImageSelect(e, 'content'));
@@ -133,9 +276,13 @@ async function uploadImage(type) {
         if (type === 'content') {
             contentImageName = data.image_name;
             statusElement.textContent = '✓ Content uploaded successfully';
+            // Reload content library to include the new content
+            loadContentLibrary();
         } else {
             styleImageName = data.image_name;
             statusElement.textContent = '✓ Style uploaded successfully';
+            // Reload style library to include the new style
+            loadStyleLibrary();
         }
         
         statusElement.className = 'status success';
@@ -225,6 +372,16 @@ function resetApp() {
     contentStatus.textContent = '';
     styleStatus.textContent = '';
     
+    // Clear style gallery selection
+    document.querySelectorAll('.style-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    // Clear content gallery selection
+    document.querySelectorAll('.content-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
     uploadContentBtn.disabled = true;
     uploadStyleBtn.disabled = true;
     generateBtn.disabled = true;
@@ -237,3 +394,7 @@ function resetApp() {
 // Initialize empty previews
 contentPreview.classList.add('empty');
 stylePreview.classList.add('empty');
+
+// Load both libraries on page load
+loadContentLibrary();
+loadStyleLibrary();

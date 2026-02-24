@@ -18,17 +18,53 @@
                 
                 <div class="upload-section">
                     <h3>Content Image</h3>
-                    <input type="file" id="contentInput" accept="image/*">
+                    
+                    <!-- Content selection tabs -->
+                    <div class="content-tabs">
+                        <button class="tab-btn active" data-tab="content-library">📚 Library</button>
+                        <button class="tab-btn" data-tab="content-upload">📤 Upload New</button>
+                    </div>
+                    
+                    <!-- Content Library -->
+                    <div id="contentLibrary" class="tab-content active">
+                        <div id="contentGallery" class="content-gallery">
+                            <p class="loading">Loading content images...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Upload New Content -->
+                    <div id="contentUpload" class="tab-content">
+                        <input type="file" id="contentInput" accept="image/*">
+                        <button id="uploadContentBtn" class="btn btn-secondary" disabled>Upload Content</button>
+                    </div>
+                    
                     <div id="contentPreview" class="preview-box"></div>
-                    <button id="uploadContentBtn" class="btn btn-secondary" disabled>Upload Content</button>
                     <p id="contentStatus" class="status"></p>
                 </div>
                 
                 <div class="upload-section">
                     <h3>Style Image</h3>
-                    <input type="file" id="styleInput" accept="image/*">
+                    
+                    <!-- Style selection tabs -->
+                    <div class="style-tabs">
+                        <button class="tab-btn active" data-tab="library">📚 Library</button>
+                        <button class="tab-btn" data-tab="upload">📤 Upload New</button>
+                    </div>
+                    
+                    <!-- Style Library -->
+                    <div id="styleLibrary" class="tab-content active">
+                        <div id="styleGallery" class="style-gallery">
+                            <p class="loading">Loading styles...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Upload New Style -->
+                    <div id="styleUpload" class="tab-content">
+                        <input type="file" id="styleInput" accept="image/*">
+                        <button id="uploadStyleBtn" class="btn btn-secondary" disabled>Upload Style</button>
+                    </div>
+                    
                     <div id="stylePreview" class="preview-box"></div>
-                    <button id="uploadStyleBtn" class="btn btn-secondary" disabled>Upload Style</button>
                     <p id="styleStatus" class="status"></p>
                 </div>
             </div>

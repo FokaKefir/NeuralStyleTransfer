@@ -77,6 +77,30 @@ async def upload_style_image(file: UploadFile = File(...)):
 
     return {'image_name': file.filename}  
 
+# list all available style images
+@app.get('/styles/list')
+async def list_style_images():
+    try:
+        files = os.listdir(style_images_dir)
+        # Filter only image files
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+        style_images = [f for f in files if os.path.splitext(f.lower())[1] in image_extensions]
+        return {'styles': style_images}
+    except Exception as e:
+        return {'styles': [], 'error': str(e)}
+
+# list all available content images
+@app.get('/content/list')
+async def list_content_images():
+    try:
+        files = os.listdir(content_images_dir)
+        # Filter only image files
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+        content_images = [f for f in files if os.path.splitext(f.lower())[1] in image_extensions]
+        return {'content': content_images}
+    except Exception as e:
+        return {'content': [], 'error': str(e)}
+
 # returns a style image
 @app.get('/image/style/{image_name}')
 async def get_style_image(image_name: str):
