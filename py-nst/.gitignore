@@ -2,6 +2,4 @@
 **/__pycache__/
 /wandb
 /data
-utils/api_const.py
-utils/google-services.json
 tmp.py

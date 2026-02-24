@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Style Transfer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Neural Style Transfer</h1>
+        <p class="subtitle">Transform your images with artistic styles</p>
+        
+        <div class="main-content">
+            <!-- Left Panel: Upload Images -->
+            <div class="panel upload-panel">
+                <h2>Upload Images</h2>
+                
+                <div class="upload-section">
+                    <h3>Content Image</h3>
+                    <input type="file" id="contentInput" accept="image/*">
+                    <div id="contentPreview" class="preview-box"></div>
+                    <button id="uploadContentBtn" class="btn btn-secondary" disabled>Upload Content</button>
+                    <p id="contentStatus" class="status"></p>
+                </div>
+                
+                <div class="upload-section">
+                    <h3>Style Image</h3>
+                    <input type="file" id="styleInput" accept="image/*">
+                    <div id="stylePreview" class="preview-box"></div>
+                    <button id="uploadStyleBtn" class="btn btn-secondary" disabled>Upload Style</button>
+                    <p id="styleStatus" class="status"></p>
+                </div>
+            </div>
+            
+            <!-- Right Panel: Parameters & Generate -->
+            <div class="panel params-panel">
+                <h2>Generation Parameters</h2>
+                
+                <div class="param-group">
+                    <label for="initMethod">Initialization Method:</label>
+                    <select id="initMethod">
+                        <option value="content">Content</option>
+                        <option value="random">Random</option>
+                        <option value="style">Style</option>
+                    </select>
+                </div>
+                
+                <div class="param-group">
+                    <label for="styleWeight">Style Strength: <span id="styleWeightValue">30000</span></label>
+                    <input type="range" id="styleWeight" min="0" max="5" value="4.5" step="0.5">
+                </div>
+                
+                <div class="param-group">
+                    <label for="tvWeight">Smoothness: <span id="tvWeightValue">1</span></label>
+                    <input type="range" id="tvWeight" min="0" max="5" value="0" step="1">
+                </div>
+                
+                <div class="param-group">
+                    <label for="iterations">Iterations: <span id="iterationsValue">1000</span></label>
+                    <input type="range" id="iterations" min="500" max="3000" value="1000" step="250">
+                </div>
+                
+                <button id="generateBtn" class="btn btn-primary" disabled>
+                    🎨 Generate Styled Image
+                </button>
+                
+                <div id="progress" class="progress-container" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing... This may take a few minutes.</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Result Panel -->
+        <div id="resultPanel" class="result-panel" style="display: none;">
+            <h2>Generated Image</h2>
+            <div class="result-content">
+                <img id="resultImage" alt="Generated image">
+                <div class="result-actions">
+                    <button id="downloadBtn" class="btn btn-primary">Download Image</button>
+                    <button id="newGenerationBtn" class="btn btn-secondary">Create New</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

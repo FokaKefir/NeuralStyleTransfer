@@ -1,13 +1,12 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 import os
 import uuid
 
 from nst import neural_style_transfer, neural_style_transfer_with_segmentation, neural_style_transfer_mixed
-from utils.db_utils import update_gen_document
-from utils.api_const import BASE_URL
 
 IMG_HEIGHT = 400
 
@@ -16,6 +15,7 @@ default_resource_dir = os.path.join(os.path.dirname(__file__), 'data')
 content_images_dir = os.path.join(default_resource_dir, 'content-images')
 style_images_dir = os.path.join(default_resource_dir, 'style-images')
 output_img_dir = os.path.join(default_resource_dir, 'output-images')
+web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'web')
 
 # create app
 app = FastAPI()
@@ -35,6 +35,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# serve the web UI
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    with open(os.path.join(web_dir, 'index.html'), 'r', encoding='utf-8') as f:
+        return f.read()
+
+# serve static files (CSS, JS)
+@app.get("/{file_name}")
+async def serve_static(file_name: str):
+    if file_name in ['style.css', 'app.js']:
+        file_path = os.path.join(web_dir, file_name)
+        return FileResponse(file_path)
 
 # content image uploader
 @app.post('/content/upload/')
@@ -90,16 +103,14 @@ async def get_generated_image(image_name: str):
     )
 
 
-#@app.get('/user/{user_id}/generate')
 @app.post('/generate')
 async def generate(
-    doc_id: str,
     content_img: str,
     style_img: str,
-    init_method: str,
-    style_weight: int,
-    tv_weight: int,
-    iterations: int
+    init_method: str = "content",
+    style_weight: int = 30000,
+    tv_weight: int = 1,
+    iterations: int = 1000
 ):
     config = {
         'content_img_name': content_img,
@@ -118,13 +129,11 @@ async def generate(
         'saving_freq': -1
     }
     img_name = neural_style_transfer(config)
-    update_gen_document(doc_id, BASE_URL + "image/generated/" + img_name)
     return {'image': img_name}
 
 
 @app.post('/generate_seg')
 async def generate_seg(
-    doc_id: str,
     content_img: str,
     style_person_img: str = "", 
     style_background_img: str = "",  
@@ -175,14 +184,11 @@ async def generate_seg(
 
     img_name = neural_style_transfer_with_segmentation(config)
 
-    update_gen_document(doc_id,BASE_URL + "image/generated/" + img_name)
-
     return {'image': img_name}
 
 
 @app.post('/generate_mixed')
 async def generate_mixed(
-    doc_id: str,
     content_img: str,
     style_img_1: str,
     style_img_2: str,
@@ -229,7 +235,5 @@ async def generate_mixed(
     }
 
     img_name = neural_style_transfer_mixed(config)
-
-    update_gen_document(doc_id, BASE_URL + "image/generated/" + img_name)
 
     return {'image': img_name}
