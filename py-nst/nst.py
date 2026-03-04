@@ -12,9 +12,8 @@ import os
 import argparse
 import cv2 as cv
 
-REFINEMENT_ITERATIONS = 10
-TILE_SIZE = 400
-TILE_OVERLAP = 16  # Overlap for feathering
+TILE_SIZE = 600
+TILE_OVERLAP = 64  # Overlap for feathering
 
 def get_original_image_dimensions(img_path):
     """Get the height and width of the original image."""
@@ -325,22 +324,7 @@ def neural_style_transfer(config):
             target_style_representation
         )
         
-        # Run final refinement iterations on the full large concatenated image
-        print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full {img_height}x{img_width} image...')
-        optimizing_img = Variable(optimizing_img_data, requires_grad=True)
-        
-        # Get target content representation for full image
-        content_img_set_of_feature_maps = neural_net(content_img)
-        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
-        target_representations = [target_content_representation, target_style_representation]
-        
-        optimizer = Adam((optimizing_img,), lr=1e1)
-        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-        
-        for cnt in range(REFINEMENT_ITERATIONS):
-            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
-            with torch.no_grad():
-                print(f'Refinement | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+        optimizing_img = Variable(optimizing_img_data, requires_grad=False)
     else:
         print(f'Image size {img_height}x{img_width} is small enough, running standard optimization...')
         
@@ -468,16 +452,7 @@ def neural_style_transfer_with_segmentation(config):
                     target_style_person_representation
                 )
             
-            # Run refinement on full concatenated person image
-            print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full person image...')
-            optimizing_person_img = Variable(optimizing_person_img_data, requires_grad=True)
-            optimizer_person_refine = Adam((optimizing_person_img,), lr=1e1)
-            tuning_step_person_refine = make_tuning_step(neural_net, optimizer_person_refine, target_person_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='person')
-            
-            for cnt in range(REFINEMENT_ITERATIONS):
-                total_loss, content_loss, style_loss, tv_loss = tuning_step_person_refine(optimizing_person_img)
-                with torch.no_grad():
-                    print(f'P: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}')
+            optimizing_person_img = Variable(optimizing_person_img_data, requires_grad=False)
         
         # Process background image in tiles if needed
         if config['style_background_img_name'] is not None:
@@ -495,16 +470,7 @@ def neural_style_transfer_with_segmentation(config):
                     target_style_background_representation
                 )
             
-            # Run refinement on full concatenated background image
-            print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full background image...')
-            optimizing_background_img = Variable(optimizing_background_img_data, requires_grad=True)
-            optimizer_background_refine = Adam((optimizing_background_img,), lr=1e1)
-            tuning_step_background_refine = make_tuning_step(neural_net, optimizer_background_refine, target_background_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='background')
-            
-            for cnt in range(REFINEMENT_ITERATIONS):
-                total_loss, content_loss, style_loss, tv_loss = tuning_step_background_refine(optimizing_background_img)
-                with torch.no_grad():
-                    print(f'B: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}')
+            optimizing_background_img = Variable(optimizing_background_img_data, requires_grad=False)
     
     # segmentation part - extract mask at the current resolution
     _, _, mask_height, mask_width = content_img.shape
@@ -580,23 +546,7 @@ def neural_style_transfer_mixed(config):
             target_style_representation_2
         )
         
-        # Run final refinement iterations on the full large image
-        img_height, img_width = content_img.shape[2], content_img.shape[3]
-        print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full {img_height}x{img_width} image...')
-        optimizing_img = Variable(optimizing_img_data, requires_grad=True)
-        
-        # Get target content representation for full image
-        content_img_set_of_feature_maps = neural_net(content_img)
-        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
-        target_representations = [target_content_representation, target_style_representation_1, target_style_representation_2]
-        
-        optimizer = Adam((optimizing_img,), lr=1e1)
-        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-        
-        for cnt in range(REFINEMENT_ITERATIONS):
-            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
-            with torch.no_grad():
-                print(f'Refinement | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+        optimizing_img = Variable(optimizing_img_data, requires_grad=False)
     else:
         print(f'Image size {img_height}x{img_width} is small enough, running standard optimization...')
         
