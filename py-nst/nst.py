@@ -12,8 +12,8 @@ import os
 import argparse
 import cv2 as cv
 
-TILE_SIZE = 600
-TILE_OVERLAP = 64  # Overlap for feathering
+TILE_SIZE = 500
+TILE_OVERLAP = 100  # Overlap for feathering
 
 def get_original_image_dimensions(img_path):
     """Get the height and width of the original image."""
@@ -32,20 +32,24 @@ def create_feather_mask(height, width, overlap):
     """Create a feathering mask for smooth tile blending."""
     mask = torch.ones(1, 1, height, width)
     
+    # Cap overlap to tile dimensions to avoid index errors on edge tiles
+    effective_overlap_h = min(overlap, height)
+    effective_overlap_w = min(overlap, width)
+    
     # Create linear gradients for edges
     if overlap > 0:
         # Top edge
-        for i in range(overlap):
-            mask[:, :, i, :] *= (i + 1) / overlap
+        for i in range(effective_overlap_h):
+            mask[:, :, i, :] *= (i + 1) / effective_overlap_h
         # Bottom edge
-        for i in range(overlap):
-            mask[:, :, height - 1 - i, :] *= (i + 1) / overlap
+        for i in range(effective_overlap_h):
+            mask[:, :, height - 1 - i, :] *= (i + 1) / effective_overlap_h
         # Left edge
-        for i in range(overlap):
-            mask[:, :, :, i] *= (i + 1) / overlap
+        for i in range(effective_overlap_w):
+            mask[:, :, :, i] *= (i + 1) / effective_overlap_w
         # Right edge
-        for i in range(overlap):
-            mask[:, :, :, width - 1 - i] *= (i + 1) / overlap
+        for i in range(effective_overlap_w):
+            mask[:, :, :, width - 1 - i] *= (i + 1) / effective_overlap_w
     
     return mask
 
@@ -107,7 +111,7 @@ def process_tiles(content_img, style_img, init_img, neural_net, content_feature_
         target_representations = [target_content_tile, target_style_representation]
         
         # Optimize this tile
-        tile_iterations = 0 #config['iterations']
+        tile_iterations = config['iterations']
         optimizer_tile = Adam((optimizing_tile,), lr=1e1)
         tuning_step_tile = make_tuning_step(neural_net, optimizer_tile, target_representations, 
                                             content_feature_maps_index, style_feature_maps_indices, config)
