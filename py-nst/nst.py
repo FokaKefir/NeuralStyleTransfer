@@ -12,7 +12,9 @@ import os
 import argparse
 import cv2 as cv
 
-REFINEMENT_ITERATIONS = 50
+REFINEMENT_ITERATIONS = 10
+TILE_SIZE = 400
+TILE_OVERLAP = 16  # Overlap for feathering
 
 def get_original_image_dimensions(img_path):
     """Get the height and width of the original image."""
@@ -25,6 +27,176 @@ def get_original_image_dimensions(img_path):
 def upscale_tensor(tensor, target_height, target_width):
     """Upscale a tensor to target dimensions using bicubic interpolation."""
     return F.interpolate(tensor, size=(target_height, target_width), mode='bicubic', align_corners=False)
+
+
+def create_feather_mask(height, width, overlap):
+    """Create a feathering mask for smooth tile blending."""
+    mask = torch.ones(1, 1, height, width)
+    
+    # Create linear gradients for edges
+    if overlap > 0:
+        # Top edge
+        for i in range(overlap):
+            mask[:, :, i, :] *= (i + 1) / overlap
+        # Bottom edge
+        for i in range(overlap):
+            mask[:, :, height - 1 - i, :] *= (i + 1) / overlap
+        # Left edge
+        for i in range(overlap):
+            mask[:, :, :, i] *= (i + 1) / overlap
+        # Right edge
+        for i in range(overlap):
+            mask[:, :, :, width - 1 - i] *= (i + 1) / overlap
+    
+    return mask
+
+
+def get_tile_positions(img_height, img_width, tile_size=TILE_SIZE, overlap=TILE_OVERLAP):
+    """Calculate tile positions for covering the entire image with overlap."""
+    positions = []
+    
+    # Calculate stride (tile_size - overlap for overlapping tiles)
+    stride = tile_size - overlap
+    
+    for y in range(0, img_height, stride):
+        for x in range(0, img_width, stride):
+            # Adjust last tiles to fit exactly
+            y_end = min(y + tile_size, img_height)
+            x_end = min(x + tile_size, img_width)
+            y_start = y_end - tile_size if y_end == img_height and y_end - y > overlap else y
+            x_start = x_end - tile_size if x_end == img_width and x_end - x > overlap else x
+            
+            # Ensure we don't go negative
+            y_start = max(0, y_start)
+            x_start = max(0, x_start)
+            
+            positions.append((y_start, y_end, x_start, x_end))
+    
+    return positions
+
+
+def process_tiles(content_img, style_img, init_img, neural_net, content_feature_maps_index, 
+                  style_feature_maps_indices, config, device, target_style_representation):
+    """Process image in tiles and stitch back together."""
+    _, _, img_height, img_width = init_img.shape
+    tile_positions = get_tile_positions(img_height, img_width)
+    
+    print(f"Processing {len(tile_positions)} tiles of size {TILE_SIZE}x{TILE_SIZE}...")
+    
+    # Create accumulator for stitched result
+    result = torch.zeros_like(init_img)
+    weight_map = torch.zeros(1, 1, img_height, img_width).to(device)
+    
+    for idx, (y_start, y_end, x_start, x_end) in enumerate(tile_positions):
+        tile_h = y_end - y_start
+        tile_w = x_end - x_start
+        
+        print(f"  Tile {idx + 1}/{len(tile_positions)}: [{y_start}:{y_end}, {x_start}:{x_end}]")
+        
+        # Extract tiles
+        content_tile = content_img[:, :, y_start:y_end, x_start:x_end]
+        init_tile = init_img[:, :, y_start:y_end, x_start:x_end]
+        
+        # Use initialization from upscaled low-res result
+        optimizing_tile = Variable(init_tile.clone(), requires_grad=True)
+        
+        # Get target representations for this tile
+        content_tile_features = neural_net(content_tile)
+        target_content_tile = content_tile_features[content_feature_maps_index].squeeze(axis=0)
+        
+        # Style representation stays the same (global style)
+        target_representations = [target_content_tile, target_style_representation]
+        
+        # Optimize this tile
+        tile_iterations = 0 #config['iterations']
+        optimizer_tile = Adam((optimizing_tile,), lr=1e1)
+        tuning_step_tile = make_tuning_step(neural_net, optimizer_tile, target_representations, 
+                                            content_feature_maps_index, style_feature_maps_indices, config)
+        
+        for cnt in range(tile_iterations):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step_tile(optimizing_tile)
+            if cnt % 10 == 0 or cnt == tile_iterations - 1:
+                with torch.no_grad():
+                    print(f"    Iter {cnt:03}: loss={total_loss.item():12.4f}")
+        
+        # Create feather mask for this tile
+        feather_mask = create_feather_mask(tile_h, tile_w, TILE_OVERLAP).to(device)
+        
+        # Expand mask to 3 channels
+        feather_mask_3ch = feather_mask.expand(-1, 3, -1, -1)
+        
+        # Add to result with feathering
+        with torch.no_grad():
+            result[:, :, y_start:y_end, x_start:x_end] += optimizing_tile.data * feather_mask_3ch
+            weight_map[:, :, y_start:y_end, x_start:x_end] += feather_mask
+    
+    # Normalize by weights
+    weight_map_3ch = weight_map.expand(-1, 3, -1, -1)
+    result = result / (weight_map_3ch + 1e-8)
+    
+    return result
+
+
+def process_tiles_mixed(content_img, style_img_1, style_img_2, init_img, neural_net, content_feature_maps_index, 
+                        style_feature_maps_indices, config, device, target_style_representation_1, target_style_representation_2):
+    """Process image in tiles for mixed style transfer and stitch back together."""
+    _, _, img_height, img_width = init_img.shape
+    tile_positions = get_tile_positions(img_height, img_width)
+    
+    print(f"Processing {len(tile_positions)} tiles of size {TILE_SIZE}x{TILE_SIZE} for mixed style...")
+    
+    # Create accumulator for stitched result
+    result = torch.zeros_like(init_img)
+    weight_map = torch.zeros(1, 1, img_height, img_width).to(device)
+    
+    for idx, (y_start, y_end, x_start, x_end) in enumerate(tile_positions):
+        tile_h = y_end - y_start
+        tile_w = x_end - x_start
+        
+        print(f"  Tile {idx + 1}/{len(tile_positions)}: [{y_start}:{y_end}, {x_start}:{x_end}]")
+        
+        # Extract tiles
+        content_tile = content_img[:, :, y_start:y_end, x_start:x_end]
+        init_tile = init_img[:, :, y_start:y_end, x_start:x_end]
+        
+        # Use initialization from upscaled low-res result
+        optimizing_tile = Variable(init_tile.clone(), requires_grad=True)
+        
+        # Get target representations for this tile
+        content_tile_features = neural_net(content_tile)
+        target_content_tile = content_tile_features[content_feature_maps_index].squeeze(axis=0)
+        
+        # Style representations stay the same (global styles)
+        target_representations = [target_content_tile, target_style_representation_1, target_style_representation_2]
+        
+        # Optimize this tile
+        tile_iterations = config['iterations']
+        optimizer_tile = Adam((optimizing_tile,), lr=1e1)
+        tuning_step_tile = make_tuning_step(neural_net, optimizer_tile, target_representations, 
+                                            content_feature_maps_index, style_feature_maps_indices, config)
+        
+        for cnt in range(tile_iterations):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step_tile(optimizing_tile)
+            if cnt % 10 == 0 or cnt == tile_iterations - 1:
+                with torch.no_grad():
+                    print(f"    Iter {cnt:03}: loss={total_loss.item():12.4f}")
+        
+        # Create feather mask for this tile
+        feather_mask = create_feather_mask(tile_h, tile_w, TILE_OVERLAP).to(device)
+        
+        # Expand mask to 3 channels
+        feather_mask_3ch = feather_mask.expand(-1, 3, -1, -1)
+        
+        # Add to result with feathering
+        with torch.no_grad():
+            result[:, :, y_start:y_end, x_start:x_end] += optimizing_tile.data * feather_mask_3ch
+            weight_map[:, :, y_start:y_end, x_start:x_end] += feather_mask
+    
+    # Normalize by weights
+    weight_map_3ch = weight_map.expand(-1, 3, -1, -1)
+    result = result / (weight_map_3ch + 1e-8)
+    
+    return result
 
 
 def build_loss(neural_net, optimizing_img, target_representations, content_feature_maps_index, style_feature_maps_indices, config, str_flag=""):
@@ -108,25 +280,10 @@ def neural_style_transfer(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine if we need multi-scale approach
-    use_multiscale = False
-    original_height, original_width = None, None
-    low_res_height = 600
+    # Use original size or specified height
+    current_height = config['height']
     
-    if config['height'] is None:
-        # Get original dimensions
-        original_height, original_width = get_original_image_dimensions(content_img_path)
-        if original_height > low_res_height:
-            use_multiscale = True
-            print(f'Using multi-scale approach: {low_res_height}px -> {original_height}px')
-            # First pass at low resolution
-            current_height = low_res_height
-        else:
-            current_height = None  # Keep original size if it's already small
-    else:
-        current_height = config['height']
-
-    # Stage 1: Low-resolution pass
+    # Prepare images at full resolution
     content_img = utils.prepare_img(content_img_path, current_height, device)
     style_img = utils.prepare_img(style_img_path, current_height, device)
 
@@ -142,66 +299,70 @@ def neural_style_transfer(config):
         style_img_resized = utils.prepare_img(style_img_path, np.asarray(content_img.shape[2:]), device)
         init_img = style_img_resized
 
-    # we are tuning optimizing_img's pixels! (that's why requires_grad=True)
-    optimizing_img = Variable(init_img, requires_grad=True)
-
     neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
     print(f'Using {config["model"]} in the optimization procedure.')
 
-    content_img_set_of_feature_maps = neural_net(content_img)
     style_img_set_of_feature_maps = neural_net(style_img)
-
-    target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
     target_style_representation = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps) if cnt in style_feature_maps_indices_names[0]]
-    target_representations = [target_content_representation, target_style_representation]
-
-    # magic numbers in general are a big no no - some things in this code are left like this by design to avoid clutter
-    num_of_iterations = config['iterations']
-
-    optimizer = Adam((optimizing_img,), lr=1e1)
-    tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-    for cnt in range(num_of_iterations):
-        total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
-        with torch.no_grad():
-            print(f'Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-
-    # Stage 2: High-resolution refinement pass (if needed)
-    if use_multiscale:
-        print(f'\nStage 1 complete. Upscaling to {original_height}x{original_width} for refinement pass...')
+    
+    # Check if we need tiling based on actual image size
+    _, _, img_height, img_width = content_img.shape
+    use_tiling = img_height > TILE_SIZE or img_width > TILE_SIZE
+    
+    if use_tiling:
+        print(f'Image size {img_height}x{img_width} requires tiling. Processing large image in {TILE_SIZE}x{TILE_SIZE} tiles...')
         
-        # Upscale the result
-        with torch.no_grad():
-            optimizing_img_upscaled = upscale_tensor(optimizing_img.data, original_height, original_width)
+        # Process large image in tiles
+        optimizing_img_data = process_tiles(
+            content_img, 
+            style_img, 
+            init_img,
+            neural_net,
+            content_feature_maps_index_name[0],
+            style_feature_maps_indices_names[0],
+            config,
+            device,
+            target_style_representation
+        )
         
-        # Prepare high-res content and style images
-        content_img_highres = utils.prepare_img(content_img_path, None, device)
-        style_img_highres = utils.prepare_img(style_img_path, None, device)
+        # Run final refinement iterations on the full large concatenated image
+        print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full {img_height}x{img_width} image...')
+        optimizing_img = Variable(optimizing_img_data, requires_grad=True)
         
-        # Recompute target representations at high resolution
-        content_img_highres_features = neural_net(content_img_highres)
-        style_img_highres_features = neural_net(style_img_highres)
+        # Get target content representation for full image
+        content_img_set_of_feature_maps = neural_net(content_img)
+        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+        target_representations = [target_content_representation, target_style_representation]
         
-        target_content_representation_highres = content_img_highres_features[content_feature_maps_index_name[0]].squeeze(axis=0)
-        target_style_representation_highres = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_highres_features) if cnt in style_feature_maps_indices_names[0]]
-        target_representations_highres = [target_content_representation_highres, target_style_representation_highres]
+        optimizer = Adam((optimizing_img,), lr=1e1)
+        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
         
-        # Use upscaled image as initialization for refinement
-        optimizing_img = Variable(optimizing_img_upscaled, requires_grad=True)
-        
-        # Fewer iterations for refinement (just adding fine details)
-        refinement_iterations = REFINEMENT_ITERATIONS
-        optimizer_highres = Adam((optimizing_img,), lr=1e1)
-        tuning_step_highres = make_tuning_step(neural_net, optimizer_highres, target_representations_highres, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-        
-        print(f'Running {refinement_iterations} refinement iterations at full resolution...')
-        for cnt in range(refinement_iterations):
-            total_loss, content_loss, style_loss, tv_loss = tuning_step_highres(optimizing_img)
+        for cnt in range(REFINEMENT_ITERATIONS):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
             with torch.no_grad():
                 print(f'Refinement | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+    else:
+        print(f'Image size {img_height}x{img_width} is small enough, running standard optimization...')
+        
+        # Standard optimization without tiling
+        optimizing_img = Variable(init_img, requires_grad=True)
+        
+        content_img_set_of_feature_maps = neural_net(content_img)
+        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+        target_representations = [target_content_representation, target_style_representation]
+
+        num_of_iterations = config['iterations']
+        optimizer = Adam((optimizing_img,), lr=1e1)
+        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
+        
+        for cnt in range(num_of_iterations):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
+            with torch.no_grad():
+                print(f'Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
 
     # Save final result
     with torch.no_grad():
-        img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, num_of_iterations-1, num_of_iterations, should_display=False)
+        img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, config['iterations']-1, config['iterations'], should_display=False)
 
     return img_name
 
@@ -218,25 +379,10 @@ def neural_style_transfer_with_segmentation(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine if we need multi-scale approach
-    use_multiscale = False
-    original_height, original_width = None, None
-    low_res_height = 600
+    # Use original size or specified height
+    current_height = config['height']
     
-    if config['height'] is None:
-        # Get original dimensions
-        original_height, original_width = get_original_image_dimensions(content_img_path)
-        if original_height > low_res_height:
-            use_multiscale = True
-            print(f'Using multi-scale approach: {low_res_height}px -> {original_height}px')
-            # First pass at low resolution
-            current_height = low_res_height
-        else:
-            current_height = None  # Keep original size if it's already small
-    else:
-        current_height = config['height']
-
-    # Stage 1: Low-resolution pass
+    # Prepare images at full resolution
     content_img = utils.prepare_img(content_img_path, current_height, device)
     style_person_img = utils.prepare_img(style_person_img_path, current_height, device) if config['style_person_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
     style_background_img = utils.prepare_img(style_background_img_path, current_height, device) if config['style_background_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
@@ -299,62 +445,69 @@ def neural_style_transfer_with_segmentation(config):
             with torch.no_grad():
                 print(f'B: Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_background_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
         
-    # Stage 2: High-resolution refinement pass (if needed)
-    if use_multiscale:
-        print(f'\nStage 1 complete. Upscaling to {original_height}x{original_width} for refinement pass...')
-        
-        # Upscale both person and background images
-        with torch.no_grad():
-            optimizing_person_img_upscaled = upscale_tensor(optimizing_person_img.data, original_height, original_width)
-            optimizing_background_img_upscaled = upscale_tensor(optimizing_background_img.data, original_height, original_width)
-        
-        # Prepare high-res images
-        content_img_highres = utils.prepare_img(content_img_path, None, device)
-        style_person_img_highres = utils.prepare_img(style_person_img_path, None, device) if config['style_person_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
-        style_background_img_highres = utils.prepare_img(style_background_img_path, None, device) if config['style_background_img_name'] is not None else torch.empty((1, 3, 32, 32), device=device)
-        
-        # Recompute target representations at high resolution
-        content_img_highres_features = neural_net(content_img_highres)
-        style_person_img_highres_features = neural_net(style_person_img_highres)
-        style_background_img_highres_features = neural_net(style_background_img_highres)
-        
-        target_content_representation_highres = content_img_highres_features[content_feature_maps_index_name[0]].squeeze(axis=0)
-        target_style_person_representation_highres = [utils.gram_matrix(x) for cnt, x in enumerate(style_person_img_highres_features) if cnt in style_feature_maps_indices_names[0]]
-        target_style_background_representation_highres = [utils.gram_matrix(x) for cnt, x in enumerate(style_background_img_highres_features) if cnt in style_feature_maps_indices_names[0]]
-        
-        target_person_representations_highres = [target_content_representation_highres, target_style_person_representation_highres]
-        target_background_representations_highres = [target_content_representation_highres, target_style_background_representation_highres]
-        
-        # Use upscaled images as initialization for refinement
-        optimizing_person_img = Variable(optimizing_person_img_upscaled, requires_grad=True)
-        optimizing_background_img = Variable(optimizing_background_img_upscaled, requires_grad=True)
-        
-        # Fewer iterations for refinement
-        refinement_iterations = REFINEMENT_ITERATIONS
-        optimizer_person_highres = Adam((optimizing_person_img,), lr=1e1)
-        optimizer_background_highres = Adam((optimizing_background_img,), lr=1e1)
-        
-        tuning_step_person_highres = make_tuning_step(neural_net, optimizer_person_highres, target_person_representations_highres, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='person')
-        tuning_step_background_highres = make_tuning_step(neural_net, optimizer_background_highres, target_background_representations_highres, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='background')
-        
-        print(f'Running {refinement_iterations} refinement iterations at full resolution...')
-        for cnt in range(refinement_iterations):
-            # optimizing person image
-            if config['style_person_img_name'] is not None:
-                total_loss, content_loss, style_loss, tv_loss = tuning_step_person_highres(optimizing_person_img)
-                with torch.no_grad():
-                    if cnt % 10 == 0 or cnt == refinement_iterations - 1:
-                        print(f'P: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_person_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-                
-            # optimizing background image
-            if config['style_background_img_name'] is not None:
-                total_loss, content_loss, style_loss, tv_loss = tuning_step_background_highres(optimizing_background_img)
-                with torch.no_grad():
-                    if cnt % 10 == 0 or cnt == refinement_iterations - 1:
-                        print(f'B: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_background_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+    # Check if tiling is needed
+    _, _, img_height, img_width = content_img.shape
+    use_tiling = img_height > TILE_SIZE or img_width > TILE_SIZE
     
-    # segmentation part - extract mask at the appropriate resolution
-    mask_height = original_height if use_multiscale else current_height
+    if use_tiling:
+        print(f'\nImage size {img_height}x{img_width} requires tiling. Processing person and background in tiles...')
+        
+        # Process person image in tiles if needed
+        if config['style_person_img_name'] is not None:
+            print("\nProcessing person tiles...")
+            with torch.no_grad():
+                optimizing_person_img_data = process_tiles(
+                    content_img,
+                    style_person_img,
+                    optimizing_person_img.data,
+                    neural_net,
+                    content_feature_maps_index_name[0],
+                    style_feature_maps_indices_names[0],
+                    config,
+                    device,
+                    target_style_person_representation
+                )
+            
+            # Run refinement on full concatenated person image
+            print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full person image...')
+            optimizing_person_img = Variable(optimizing_person_img_data, requires_grad=True)
+            optimizer_person_refine = Adam((optimizing_person_img,), lr=1e1)
+            tuning_step_person_refine = make_tuning_step(neural_net, optimizer_person_refine, target_person_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='person')
+            
+            for cnt in range(REFINEMENT_ITERATIONS):
+                total_loss, content_loss, style_loss, tv_loss = tuning_step_person_refine(optimizing_person_img)
+                with torch.no_grad():
+                    print(f'P: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}')
+        
+        # Process background image in tiles if needed
+        if config['style_background_img_name'] is not None:
+            print("\nProcessing background tiles...")
+            with torch.no_grad():
+                optimizing_background_img_data = process_tiles(
+                    content_img,
+                    style_background_img,
+                    optimizing_background_img.data,
+                    neural_net,
+                    content_feature_maps_index_name[0],
+                    style_feature_maps_indices_names[0],
+                    config,
+                    device,
+                    target_style_background_representation
+                )
+            
+            # Run refinement on full concatenated background image
+            print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full background image...')
+            optimizing_background_img = Variable(optimizing_background_img_data, requires_grad=True)
+            optimizer_background_refine = Adam((optimizing_background_img,), lr=1e1)
+            tuning_step_background_refine = make_tuning_step(neural_net, optimizer_background_refine, target_background_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config, str_flag='background')
+            
+            for cnt in range(REFINEMENT_ITERATIONS):
+                total_loss, content_loss, style_loss, tv_loss = tuning_step_background_refine(optimizing_background_img)
+                with torch.no_grad():
+                    print(f'B: Refine | iteration: {cnt:03}, total loss={total_loss.item():12.4f}')
+    
+    # segmentation part - extract mask at the current resolution
+    _, _, mask_height, mask_width = content_img.shape
     mask_seg = extract_person_mask_from_image(image_path=content_img_path, segmentation_mask_height=mask_height, device=device)
 
     mask_np = mask_seg.astype(np.float32) / 255.0    # most [0.0, 1.0]
@@ -381,25 +534,10 @@ def neural_style_transfer_mixed(config):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Determine if we need multi-scale approach
-    use_multiscale = False
-    original_height, original_width = None, None
-    low_res_height = 600
+    # Use original size or specified height
+    current_height = config['height']
     
-    if config['height'] is None:
-        # Get original dimensions
-        original_height, original_width = get_original_image_dimensions(content_img_path)
-        if original_height > low_res_height:
-            use_multiscale = True
-            print(f'Using multi-scale approach: {low_res_height}px -> {original_height}px')
-            # First pass at low resolution
-            current_height = low_res_height
-        else:
-            current_height = None  # Keep original size if it's already small
-    else:
-        current_height = config['height']
-
-    # Stage 1: Low-resolution pass
+    # Prepare images at full resolution
     content_img = utils.prepare_img(content_img_path, current_height, device)
     style_img_1 = utils.prepare_img(style_img_path_1, current_height, device)
     style_img_2 = utils.prepare_img(style_img_path_2, current_height, device)
@@ -411,72 +549,75 @@ def neural_style_transfer_mixed(config):
     elif config['init_method'] == 'content':
         init_img = content_img
 
-
-    # we are tuning optimizing_img's pixels! (that's why requires_grad=True)
-    optimizing_img = Variable(init_img, requires_grad=True)
-
     neural_net, content_feature_maps_index_name, style_feature_maps_indices_names = utils.prepare_model(config['model'], device)
     print(f'Using {config["model"]} in the optimization procedure.')
 
-    content_img_set_of_feature_maps = neural_net(content_img)
     style_img_set_of_feature_maps_1 = neural_net(style_img_1)
     style_img_set_of_feature_maps_2 = neural_net(style_img_2)
-
-    target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+    
     target_style_representation_1 = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps_1) if cnt in style_feature_maps_indices_names[0]]
     target_style_representation_2 = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps_2) if cnt in style_feature_maps_indices_names[0]]
-    target_representations = [target_content_representation, target_style_representation_1, target_style_representation_2]
 
-    # magic numbers in general are a big no no - some things in this code are left like this by design to avoid clutter
-    num_of_iterations = config['iterations']
-
-    optimizer = Adam((optimizing_img,), lr=1e1)
-    tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-    for cnt in range(num_of_iterations):
-        total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
-        with torch.no_grad():
-            print(f'Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-
-    # Stage 2: High-resolution refinement pass (if needed)
-    if use_multiscale:
-        print(f'\nStage 1 complete. Upscaling to {original_height}x{original_width} for refinement pass...')
+    # Check if we need tiling
+    _, _, img_height, img_width = content_img.shape
+    use_tiling = img_height > TILE_SIZE or img_width > TILE_SIZE
+    
+    if use_tiling:
+        print(f'Image size {img_height}x{img_width} requires tiling. Processing in {TILE_SIZE}x{TILE_SIZE} tiles...')
         
-        # Upscale the result
-        with torch.no_grad():
-            optimizing_img_upscaled = upscale_tensor(optimizing_img.data, original_height, original_width)
+        # Process image in tiles
+        optimizing_img_data = process_tiles_mixed(
+            content_img,
+            style_img_1,
+            style_img_2,
+            init_img,
+            neural_net,
+            content_feature_maps_index_name[0],
+            style_feature_maps_indices_names[0],
+            config,
+            device,
+            target_style_representation_1,
+            target_style_representation_2
+        )
         
-        # Prepare high-res content and style images
-        content_img_highres = utils.prepare_img(content_img_path, None, device)
-        style_img_1_highres = utils.prepare_img(style_img_path_1, None, device)
-        style_img_2_highres = utils.prepare_img(style_img_path_2, None, device)
+        # Run final refinement iterations on the full large image
+        img_height, img_width = content_img.shape[2], content_img.shape[3]
+        print(f'\nRunning {REFINEMENT_ITERATIONS} refinement iterations on full {img_height}x{img_width} image...')
+        optimizing_img = Variable(optimizing_img_data, requires_grad=True)
         
-        # Recompute target representations at high resolution
-        content_img_highres_features = neural_net(content_img_highres)
-        style_img_1_highres_features = neural_net(style_img_1_highres)
-        style_img_2_highres_features = neural_net(style_img_2_highres)
+        # Get target content representation for full image
+        content_img_set_of_feature_maps = neural_net(content_img)
+        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+        target_representations = [target_content_representation, target_style_representation_1, target_style_representation_2]
         
-        target_content_representation_highres = content_img_highres_features[content_feature_maps_index_name[0]].squeeze(axis=0)
-        target_style_representation_1_highres = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_1_highres_features) if cnt in style_feature_maps_indices_names[0]]
-        target_style_representation_2_highres = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_2_highres_features) if cnt in style_feature_maps_indices_names[0]]
-        target_representations_highres = [target_content_representation_highres, target_style_representation_1_highres, target_style_representation_2_highres]
+        optimizer = Adam((optimizing_img,), lr=1e1)
+        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
         
-        # Use upscaled image as initialization for refinement
-        optimizing_img = Variable(optimizing_img_upscaled, requires_grad=True)
-        
-        # Fewer iterations for refinement (just adding fine details)
-        refinement_iterations = REFINEMENT_ITERATIONS
-        optimizer_highres = Adam((optimizing_img,), lr=1e1)
-        tuning_step_highres = make_tuning_step(neural_net, optimizer_highres, target_representations_highres, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
-        
-        print(f'Running {refinement_iterations} refinement iterations at full resolution...')
-        for cnt in range(refinement_iterations):
-            total_loss, content_loss, style_loss, tv_loss = tuning_step_highres(optimizing_img)
+        for cnt in range(REFINEMENT_ITERATIONS):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
             with torch.no_grad():
-                if cnt % 10 == 0 or cnt == refinement_iterations - 1:
-                    print(f'Refinement | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+                print(f'Refinement | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
+    else:
+        print(f'Image size {img_height}x{img_width} is small enough, running standard optimization...')
+        
+        # Standard optimization without tiling
+        optimizing_img = Variable(init_img, requires_grad=True)
+        
+        content_img_set_of_feature_maps = neural_net(content_img)
+        target_content_representation = content_img_set_of_feature_maps[content_feature_maps_index_name[0]].squeeze(axis=0)
+        target_representations = [target_content_representation, target_style_representation_1, target_style_representation_2]
+
+        num_of_iterations = config['iterations']
+        optimizer = Adam((optimizing_img,), lr=1e1)
+        tuning_step = make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index_name[0], style_feature_maps_indices_names[0], config)
+        
+        for cnt in range(num_of_iterations):
+            total_loss, content_loss, style_loss, tv_loss = tuning_step(optimizing_img)
+            with torch.no_grad():
+                print(f'Adam | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
 
     # Save final result
     with torch.no_grad():
-        img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, num_of_iterations-1, num_of_iterations, should_display=False)
+        img_name = utils.save_and_maybe_display(optimizing_img, dump_path, config, config['iterations']-1, config['iterations'], should_display=False)
 
     return img_name
