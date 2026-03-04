@@ -134,8 +134,12 @@ async def generate(
     init_method: str = "content",
     style_weight: int = 30000,
     tv_weight: int = 1,
-    iterations: int = 1000
+    iterations: int = 1000,
+    use_original_size: bool = False
 ):
+    # Set height based on use_original_size flag
+    height = None if use_original_size else IMG_HEIGHT
+    
     config = {
         'content_img_name': content_img,
         'style_img_name': style_img,
@@ -149,7 +153,7 @@ async def generate(
         'style_images_dir': style_images_dir,
         'output_img_dir': output_img_dir,
         'img_format': (4, '.jpg'),
-        'height': IMG_HEIGHT,
+        'height': height,
         'saving_freq': -1
     }
     img_name = neural_style_transfer(config)
@@ -165,10 +169,14 @@ async def generate_seg(
     style_person_weight: float = None,
     style_background_weight: float = None,
     tv_weight: float = 1.0,
-    iterations: int = 1000
+    iterations: int = 1000,
+    use_original_size: bool = False
 ):
     person_img = style_person_img or None
     background_img = style_background_img or None
+    
+    # Set height based on use_original_size flag
+    height = None if use_original_size else IMG_HEIGHT
 
     if person_img is None and background_img is None:
         raise HTTPException(
@@ -202,7 +210,7 @@ async def generate_seg(
         'style_images_dir':            style_images_dir,
         'output_img_dir':              output_img_dir,
         'img_format':                  (4, '.jpg'),
-        'height':                      IMG_HEIGHT,
+        'height':                      height,
         'saving_freq':                 -1
     }
 
@@ -220,8 +228,12 @@ async def generate_mixed(
     style_weight: float = None,
     alpha: float = 0.5,
     tv_weight: float = 1.0,
-    iterations: int = 1000
+    iterations: int = 1000,
+    use_original_size: bool = False
 ):
+    # Set height based on use_original_size flag
+    height = None if use_original_size else IMG_HEIGHT
+    
     # 1) Kötelező mezők
     if not style_img_1 or not style_img_2:
         raise HTTPException(
@@ -254,7 +266,7 @@ async def generate_mixed(
         'style_images_dir':     style_images_dir,
         'output_img_dir':       output_img_dir,
         'img_format':           (4, '.jpg'),
-        'height':               IMG_HEIGHT,
+        'height':               height,
         'saving_freq':          -1
     }
 

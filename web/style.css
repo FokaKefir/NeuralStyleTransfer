@@ -207,6 +207,19 @@ input[type="file"] {
     cursor: pointer;
 }
 
+.param-group.checkbox-group label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-weight: 400;
+}
+
+.param-group.checkbox-group input[type="checkbox"] {
+    width: auto;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
 .btn {
     padding: 12px 24px;
     border: none;

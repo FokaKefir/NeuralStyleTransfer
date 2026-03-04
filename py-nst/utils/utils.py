@@ -25,7 +25,7 @@ def load_image(img_path, target_shape=None):
     img = cv.imread(img_path)[:, :, ::-1]  # [:, :, ::-1] converts BGR (opencv format...) into RGB
 
     if target_shape is not None:  # resize section
-        if isinstance(target_shape, int) and target_shape != -1:  # scalar -> implicitly setting the height
+        if isinstance(target_shape, int):  # scalar -> implicitly setting the height
             current_height, current_width = img.shape[:2]
             new_height = target_shape
             new_width = int(current_width * (new_height / current_height))
@@ -41,6 +41,7 @@ def load_image(img_path, target_shape=None):
 
 def prepare_img(img_path, target_shape, device):
     img = load_image(img_path, target_shape=target_shape)
+    print(img.shape)
 
     # normalize using ImageNet's mean
     # [0, 255] range worked much better for me than [0, 1] range (even though PyTorch models were trained on latter)

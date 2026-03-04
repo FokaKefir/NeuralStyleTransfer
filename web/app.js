@@ -35,6 +35,7 @@ const styleLibrary = document.getElementById('styleLibrary');
 const styleUpload = document.getElementById('styleUpload');
 const contentLibrary = document.getElementById('contentLibrary');
 const contentUpload = document.getElementById('contentUpload');
+const useOriginalSize = document.getElementById('useOriginalSize');
 
 // Event Listeners
 contentInput.addEventListener('change', (e) => handleImageSelect(e, 'content'));
@@ -312,7 +313,8 @@ async function generateImage() {
         init_method: initMethod.value,
         style_weight: getStyleWeight(styleWeightSlider.value),
         tv_weight: getTvWeight(tvWeightSlider.value),
-        iterations: iterationsSlider.value
+        iterations: iterationsSlider.value,
+        use_original_size: useOriginalSize.checked
     });
     
     try {
@@ -331,6 +333,9 @@ async function generateImage() {
         resultImage.src = `${API_URL}/image/generated/${data.image}`;
         resultImage.dataset.imageName = data.image;
         resultPanel.style.display = 'block';
+        
+        // Re-enable generate button for new generation with different parameters
+        generateBtn.disabled = false;
         
         // Scroll to result
         resultPanel.scrollIntoView({ behavior: 'smooth' });
