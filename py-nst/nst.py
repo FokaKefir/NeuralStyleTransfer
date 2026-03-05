@@ -11,6 +11,7 @@ import numpy as np
 import os
 import argparse
 import cv2 as cv
+from tqdm import tqdm
 
 TILE_SIZE = 500
 TILE_OVERLAP = 100  # Overlap for feathering
@@ -116,11 +117,8 @@ def process_tiles(content_img, style_img, init_img, neural_net, content_feature_
         tuning_step_tile = make_tuning_step(neural_net, optimizer_tile, target_representations, 
                                             content_feature_maps_index, style_feature_maps_indices, config)
         
-        for cnt in range(tile_iterations):
+        for cnt in tqdm(range(tile_iterations), desc=f"Tile {idx+1}/{len(tile_positions)}", leave=False):
             total_loss, content_loss, style_loss, tv_loss = tuning_step_tile(optimizing_tile)
-            if cnt % 10 == 0 or cnt == tile_iterations - 1:
-                with torch.no_grad():
-                    print(f"    Iter {cnt:03}: loss={total_loss.item():12.4f}")
         
         # Create feather mask for this tile
         feather_mask = create_feather_mask(tile_h, tile_w, TILE_OVERLAP).to(device)
@@ -178,11 +176,8 @@ def process_tiles_mixed(content_img, style_img_1, style_img_2, init_img, neural_
         tuning_step_tile = make_tuning_step(neural_net, optimizer_tile, target_representations, 
                                             content_feature_maps_index, style_feature_maps_indices, config)
         
-        for cnt in range(tile_iterations):
+        for cnt in tqdm(range(tile_iterations), desc=f"Tile {idx+1}/{len(tile_positions)}", leave=False):
             total_loss, content_loss, style_loss, tv_loss = tuning_step_tile(optimizing_tile)
-            if cnt % 10 == 0 or cnt == tile_iterations - 1:
-                with torch.no_grad():
-                    print(f"    Iter {cnt:03}: loss={total_loss.item():12.4f}")
         
         # Create feather mask for this tile
         feather_mask = create_feather_mask(tile_h, tile_w, TILE_OVERLAP).to(device)
